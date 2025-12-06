@@ -9,64 +9,59 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# URL BMKG yang benar
 BMKG_URL = "https://api.bmkg.go.id/publik/prakiraan-cuaca"
 
 @app.get("/")
 def index():
-    return {"message": "BMKG Weather Proxy API is running!"}
+    return {"message": "BMKG Weather API is running!"}
+
 
 @app.get("/weather/{kode}")
 def get_weather(kode: str, db: Session = Depends(get_db)):
-    """
-    Mengambil data cuaca dari API BMKG berdasarkan kode ADM4 (?adm4=xxx)
-    lalu menyimpannya ke database.
-    """
 
-    # Contoh: ?adm4=31.71.03.1001
     url = f"{BMKG_URL}?adm4={kode}"
 
-    response = requests.get(url)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://www.bmkg.go.id/",
+        "Origin": "https://www.bmkg.go.id"
+    }
+
+    response = requests.get(url, headers=headers)
 
     if response.status_code != 200:
-        return {
-            "error": "Gagal mengambil data BMKG",
-            "status": response.status_code,
-            "url": url
-        }
+        return {"error": "Gagal mengambil data BMKG", "status": response.status_code, "url": url}
 
     data = response.json()
 
-    # Pastikan format data sesuai
-    # BMKG biasanya return: { "data": { "parameter": [ ... ] } }
-    if "data" not in data:
-        return {"error": "Format data BMKG tidak sesuai", "raw": data}
+    if "data" not in data or len(data["data"]) == 0:
+        return {"error": "Struktur JSON tidak sesuai", "contoh": data}
 
-    # DATA CUACA BIASANYA ADA DI DALAM:
-    # data["data"]["cuaca"]["value"]
-    cuaca_data = data["data"]
+    # Ambil data cuaca pertama
+    cuaca_data = data["data"][0]["cuaca"]
+    first_item = cuaca_data[0][0]  # data jam terdekat
 
-    # Extract contoh parameter (disesuaikan dengan struktur yang BMKG kirim)
-    kondisi = cuaca_data.get("cuaca", {}).get("value", "-")
-    suhu = cuaca_data.get("t", {}).get("value", "-")
-    kelembaban = cuaca_data.get("hu", {}).get("value", "-")
+    kondisi = first_item.get("weather_desc", "-")
+    suhu = first_item.get("t", "-")
+    kelembaban = first_item.get("hu", "-")
 
-    # Simpan ke database
-    save_data = Weather(
+    # Simpan DB
+    weather = Weather(
         kode_wilayah=kode,
         cuaca=str(kondisi),
         suhu=str(suhu),
         kelembaban=str(kelembaban),
         timestamp=datetime.now()
     )
-
-    db.add(save_data)
+    db.add(weather)
     db.commit()
+    db.refresh(weather)
 
     return {
-        "kode_wilayah": kode,
+        "status": "Data berhasil disimpan ke database!",
+        "kode": kode,
         "cuaca": kondisi,
         "suhu": suhu,
-        "kelembaban": kelembaban,
-        "sumber": url
+        "kelembaban": kelembaban
     }
